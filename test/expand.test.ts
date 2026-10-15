@@ -1,0 +1,438 @@
+import { expect, spyOn, test } from "bun:test";
+import { expandShareLink, type Fetcher } from "../src/expand";
+
+const FB_POST_LOC =
+  "https://www.facebook.com/mannynewsletter/posts/pfbid02w1fJYqdqq36s8V1wsTDognPKniCQ8E6BkEzHehiNe1zWZxgB67EV4Nz9cyLxtnqol?rdid=VGXEydyR2cRY58Er&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2Fp%2F1Fu5ScGFUZ%2F";
+const FB_REEL_LOC =
+  "https://www.facebook.com/reel/1016339268064528?rdid=yW04JMxj7FGRfmRn&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2Fv%2F1HSGH1rf7o%2F";
+const IG_REEL_LOC = "https://www.instagram.com/reel/DJvkjAlvNc8/?igsh=QkFfQVp3Q3ZnTw%3D%3D";
+const IG_POST_LOC = "https://www.instagram.com/p/DOBXTYNklfi/?igsh=QkFCWXA3TG9BVA%3D%3D";
+const M_LOC =
+  "https://m.facebook.com/mannynewsletter/posts/pfbid02w1fJYqdqq36s8V1wsTDognPKniCQ8E6BkEzHehiNe1zWZxgB67EV4Nz9cyLxtnqol?rdid=JoOqIJIyWQqLPTAT&share_url=https%3A%2F%2Fm.facebook.com%2Fshare%2Fp%2F1Fu5ScGFUZ%2F&refsrc=deprecated&_rdr";
+
+function redirect(location: string, status = 302): Response {
+  return new Response(null, { status, headers: { Location: location } });
+}
+
+function recording(
+  responses: Response[] = [new Response(null, { status: 200 })],
+): { fetcher: Fetcher; calls: Array<{ input: string; init: RequestInit }> } {
+  const calls: Array<{ input: string; init: RequestInit }> = [];
+  const fetcher: Fetcher = (input, init) => {
+    calls.push({ input, init });
+    return Promise.resolve(responses[calls.length - 1] ?? responses[responses.length - 1]);
+  };
+  return { fetcher, calls };
+}
+
+function expectProbe(init: RequestInit): void {
+  expect(init.method).toBe("HEAD");
+  expect(new Headers(init.headers).get("user-agent")).toBe("Go-http-client/1.1");
+  expect(init.redirect).toBe("manual");
+}
+
+test("a facebook reel is not a share link and is not fetched", async () => {
+  const { fetcher, calls } = recording();
+  const href = "https://www.facebook.com/reel/1016339268064528";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(result?.href).toBe(href);
+  expect(calls).toHaveLength(0);
+});
+
+test("the facebook sharer endpoint is not a share link", async () => {
+  const { fetcher, calls } = recording();
+  const href = "https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fexample.com";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(result?.href).toBe(href);
+  expect(calls).toHaveLength(0);
+});
+
+test("a bare /share/ path is not a share link", async () => {
+  const { fetcher, calls } = recording();
+  const href = "https://www.facebook.com/share/";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(result?.href).toBe(href);
+  expect(calls).toHaveLength(0);
+});
+
+test("a share path on another host is not expanded", async () => {
+  const { fetcher, calls } = recording();
+  const href = "https://example.com/share/p/1Fu5ScGFUZ/";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(result?.href).toBe(href);
+  expect(calls).toHaveLength(0);
+});
+
+test("a lookalike instagram host is not expanded", async () => {
+  const { fetcher, calls } = recording();
+  const href = "https://instagram.com.evil.example/share/reel/_gdkGEJBn/";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(result?.href).toBe(href);
+  expect(calls).toHaveLength(0);
+});
+
+test("a non-http scheme is returned unchanged without a fetch", async () => {
+  const { fetcher, calls } = recording([
+    redirect("https://www.facebook.com/reel/1016339268064528"),
+  ]);
+  const href = "foo://www.facebook.com/share/p/1Fu5ScGFUZ/";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(calls).toHaveLength(0);
+  expect(result?.href).toBe(new URL(href).href);
+});
+
+test("a share link with a username and password is returned unchanged without a fetch", async () => {
+  const { fetcher, calls } = recording([
+    redirect("https://www.facebook.com/reel/1016339268064528"),
+  ]);
+  const href = "https://u:p@www.facebook.com/share/p/1Fu5ScGFUZ/";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(calls).toHaveLength(0);
+  expect(result?.href).toBe(href);
+});
+
+test("a share link with only a username is returned unchanged without a fetch", async () => {
+  const { fetcher, calls } = recording([
+    redirect("https://www.facebook.com/reel/1016339268064528"),
+  ]);
+  const href = "https://u@www.facebook.com/share/p/1Fu5ScGFUZ/";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(calls).toHaveLength(0);
+  expect(result?.href).toBe(href);
+});
+
+test("a share link with only a password is returned unchanged without a fetch", async () => {
+  const { fetcher, calls } = recording([
+    redirect("https://www.facebook.com/reel/1016339268064528"),
+  ]);
+  const href = "https://:p@www.facebook.com/share/p/1Fu5ScGFUZ/";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(calls).toHaveLength(0);
+  expect(result?.href).toBe(href);
+});
+
+test("an ftp share link is returned unchanged without a fetch", async () => {
+  const { fetcher, calls } = recording([
+    redirect("https://www.facebook.com/reel/1016339268064528"),
+  ]);
+  const href = "ftp://www.facebook.com/share/p/1Fu5ScGFUZ/";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(calls).toHaveLength(0);
+  expect(result?.href).toBe(href);
+});
+
+test("a facebook share link is probed with a manual HEAD and the go client user agent", async () => {
+  const { fetcher, calls } = recording([redirect(FB_POST_LOC)]);
+  await expandShareLink(new URL("https://www.facebook.com/share/p/1Fu5ScGFUZ/"), fetcher);
+  expect(calls[0].input).toBe("https://www.facebook.com/share/p/1Fu5ScGFUZ/");
+  expectProbe(calls[0].init);
+});
+
+test("the probe upgrades http to https and drops the fragment but keeps the query", async () => {
+  const { fetcher, calls } = recording([redirect(FB_POST_LOC)]);
+  await expandShareLink(
+    new URL("http://www.facebook.com/share/p/1Fu5ScGFUZ/?mibextid=wwXIfr#frag"),
+    fetcher,
+  );
+  expect(calls[0].input).toBe("https://www.facebook.com/share/p/1Fu5ScGFUZ/?mibextid=wwXIfr");
+});
+
+test("an instagram share link uses the same probe shape", async () => {
+  const { fetcher, calls } = recording([redirect(IG_REEL_LOC)]);
+  await expandShareLink(new URL("https://www.instagram.com/share/reel/_gdkGEJBn/"), fetcher);
+  expectProbe(calls[0].init);
+});
+
+test("a share link with an explicit port is probed without the port", async () => {
+  const { fetcher, calls } = recording([redirect(FB_POST_LOC)]);
+  await expandShareLink(new URL("https://www.facebook.com:8443/share/p/1Fu5ScGFUZ/"), fetcher);
+  expect(calls[0].input).toBe("https://www.facebook.com/share/p/1Fu5ScGFUZ/");
+  expectProbe(calls[0].init);
+});
+
+test("a follow-up share location is probed without its fragment", async () => {
+  const { fetcher, calls } = recording([
+    redirect("https://www.facebook.com/share/p/1Fu5ScGFUZ/#frag", 301),
+    redirect(FB_POST_LOC),
+  ]);
+  await expandShareLink(new URL("https://facebook.com/share/p/1Fu5ScGFUZ/"), fetcher);
+  expect(calls.map((call) => call.input)).toEqual([
+    "https://facebook.com/share/p/1Fu5ScGFUZ/",
+    "https://www.facebook.com/share/p/1Fu5ScGFUZ/",
+  ]);
+  expectProbe(calls[0].init);
+  expectProbe(calls[1].init);
+});
+
+const FB_SHARE = "https://www.facebook.com/share/p/1Fu5ScGFUZ/";
+
+test("a 200 without a location fails the expansion", async () => {
+  const { fetcher } = recording([new Response(null, { status: 200 })]);
+  expect(await expandShareLink(new URL(FB_SHARE), fetcher)).toBeNull();
+});
+
+test("a 400 without a location fails the expansion", async () => {
+  const { fetcher } = recording([new Response(null, { status: 400 })]);
+  expect(await expandShareLink(new URL(FB_SHARE), fetcher)).toBeNull();
+});
+
+test("a redirect without a location fails the expansion", async () => {
+  const { fetcher } = recording([new Response(null, { status: 302 })]);
+  expect(await expandShareLink(new URL(FB_SHARE), fetcher)).toBeNull();
+});
+
+test("a 200 that carries a location still fails the expansion", async () => {
+  const { fetcher } = recording([
+    new Response(null, { status: 200, headers: { Location: FB_POST_LOC } }),
+  ]);
+  expect(await expandShareLink(new URL(FB_SHARE), fetcher)).toBeNull();
+});
+
+test("a rejected probe fails the expansion", async () => {
+  const fetcher: Fetcher = () => Promise.reject(new TypeError("fetch failed"));
+  expect(await expandShareLink(new URL(FB_SHARE), fetcher)).toBeNull();
+});
+
+test("an aborted probe fails the expansion", async () => {
+  const fetcher: Fetcher = () => Promise.reject(new DOMException("The operation was aborted.", "AbortError"));
+  expect(await expandShareLink(new URL(FB_SHARE), fetcher)).toBeNull();
+});
+
+test("a synchronous probe throw fails the expansion", async () => {
+  const fetcher: Fetcher = () => {
+    throw new Error("boom");
+  };
+  expect(await expandShareLink(new URL(FB_SHARE), fetcher)).toBeNull();
+});
+
+test("a redirect with an empty location fails after one request", async () => {
+  const { fetcher, calls } = recording([
+    new Response(null, { status: 302, headers: { Location: "" } }),
+  ]);
+  expect(await expandShareLink(new URL(FB_SHARE), fetcher)).toBeNull();
+  expect(calls).toHaveLength(1);
+});
+
+test("a facebook post share link resolves to the redirect location with its query intact", async () => {
+  const { fetcher } = recording([redirect(FB_POST_LOC)]);
+  const result = await expandShareLink(new URL("https://www.facebook.com/share/p/1Fu5ScGFUZ/"), fetcher);
+  expect(result?.href).toBe(FB_POST_LOC);
+});
+
+test("a facebook reel share link resolves to the reel location", async () => {
+  const { fetcher } = recording([redirect(FB_REEL_LOC)]);
+  const result = await expandShareLink(new URL("https://www.facebook.com/share/v/1HSGH1rf7o/"), fetcher);
+  expect(result?.href).toBe(FB_REEL_LOC);
+});
+
+test("an instagram reel share link resolves to the reel location with its query intact", async () => {
+  const { fetcher } = recording([redirect(IG_REEL_LOC)]);
+  const result = await expandShareLink(new URL("https://www.instagram.com/share/reel/_gdkGEJBn/"), fetcher);
+  expect(result?.href).toBe(IG_REEL_LOC);
+});
+
+test("a facebook /share/r/ link resolves to the reel location", async () => {
+  const location =
+    "https://www.facebook.com/reel/1016339268064528?rdid=R4&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2Fr%2F1HSGH1rf7o%2F";
+  const { fetcher } = recording([redirect(location)]);
+  const result = await expandShareLink(new URL("https://www.facebook.com/share/r/1HSGH1rf7o/"), fetcher);
+  expect(result?.href).toBe(location);
+});
+
+test("a bare facebook share id resolves to the post location", async () => {
+  const location =
+    "https://www.facebook.com/mannynewsletter/posts/pfbid02w1fJYqdqq36s8V1wsTDognPKniCQ8E6BkEzHehiNe1zWZxgB67EV4Nz9cyLxtnqol?rdid=R5&share_url=https%3A%2F%2Fwww.facebook.com%2Fshare%2F1Fu5ScGFUZ%2F";
+  const { fetcher } = recording([redirect(location)]);
+  const result = await expandShareLink(new URL("https://www.facebook.com/share/1Fu5ScGFUZ/"), fetcher);
+  expect(result?.href).toBe(location);
+});
+
+test("an instagram post share link resolves to the post location", async () => {
+  const { fetcher } = recording([redirect(IG_POST_LOC)]);
+  const result = await expandShareLink(new URL("https://www.instagram.com/share/p/BBFVaX2n1Y/"), fetcher);
+  expect(result?.href).toBe(IG_POST_LOC);
+});
+
+test("a bare instagram share id resolves to the post location", async () => {
+  const { fetcher } = recording([redirect(IG_POST_LOC)]);
+  const result = await expandShareLink(new URL("https://www.instagram.com/share/BBFVaX2n1Y/"), fetcher);
+  expect(result?.href).toBe(IG_POST_LOC);
+});
+
+test("a mobile facebook share link resolves to the mobile location", async () => {
+  const { fetcher } = recording([redirect(M_LOC)]);
+  const result = await expandShareLink(new URL("https://m.facebook.com/share/p/1Fu5ScGFUZ/"), fetcher);
+  expect(result?.href).toBe(M_LOC);
+});
+
+test("a facebook share link without a trailing slash still resolves", async () => {
+  const { fetcher } = recording([redirect(FB_POST_LOC)]);
+  const result = await expandShareLink(new URL("https://www.facebook.com/share/p/1Fu5ScGFUZ"), fetcher);
+  expect(result?.href).toBe(FB_POST_LOC);
+});
+
+test("a relative reel location is resolved against the share link", async () => {
+  const { fetcher } = recording([redirect("/reel/1016339268064528?rdid=R10")]);
+  const result = await expandShareLink(new URL("https://www.facebook.com/share/v/1HSGH1rf7o/"), fetcher);
+  expect(result?.href).toBe("https://www.facebook.com/reel/1016339268064528?rdid=R10");
+});
+
+test("a 307 redirect resolves the same way as a 302", async () => {
+  const { fetcher } = recording([redirect(FB_REEL_LOC, 307)]);
+  const result = await expandShareLink(new URL("https://www.facebook.com/share/v/1HSGH1rf7o/"), fetcher);
+  expect(result?.href).toBe(FB_REEL_LOC);
+});
+
+async function rejected(url: string, location: string): Promise<number> {
+  const { fetcher, calls } = recording([redirect(location)]);
+  expect(await expandShareLink(new URL(url), fetcher)).toBeNull();
+  return calls.length;
+}
+
+test("a facebook unsupported-browser redirect fails the expansion", async () => {
+  expect(
+    await rejected("https://www.facebook.com/share/p/1Fu5ScGFUZ/", "https://www.facebook.com/unsupportedbrowser"),
+  ).toBe(1);
+});
+
+test("an instagram share link sent to facebook unsupported-browser fails", async () => {
+  expect(
+    await rejected(
+      "https://www.instagram.com/share/reel/_gdkGEJBn/",
+      "https://www.facebook.com/unsupportedbrowser",
+    ),
+  ).toBe(1);
+});
+
+test("an instagram login redirect fails the expansion", async () => {
+  expect(
+    await rejected(
+      "https://www.instagram.com/share/reel/_gdkGEJBn/",
+      "https://www.instagram.com/accounts/login/?next=%2Fshare%2Freel%2F_gdkGEJBn%2F",
+    ),
+  ).toBe(1);
+});
+
+test("an http location fails the expansion", async () => {
+  expect(
+    await rejected(
+      "https://www.facebook.com/share/p/1Fu5ScGFUZ/",
+      "http://www.facebook.com/reel/1016339268064528",
+    ),
+  ).toBe(1);
+});
+
+test("a cross-platform location fails the expansion", async () => {
+  expect(
+    await rejected(
+      "https://www.facebook.com/share/p/1Fu5ScGFUZ/",
+      "https://www.instagram.com/reel/DJvkjAlvNc8/",
+    ),
+  ).toBe(1);
+});
+
+test("a lookalike facebook host fails the expansion", async () => {
+  expect(
+    await rejected(
+      "https://www.facebook.com/share/p/1Fu5ScGFUZ/",
+      "https://www.facebook.com.evil.example/reel/1016339268064528",
+    ),
+  ).toBe(1);
+});
+
+test("a location with userinfo fails the expansion", async () => {
+  expect(
+    await rejected(
+      "https://www.facebook.com/share/p/1Fu5ScGFUZ/",
+      "https://user:pw@www.facebook.com/reel/1016339268064528",
+    ),
+  ).toBe(1);
+});
+
+test("a location with an explicit port fails the expansion", async () => {
+  expect(
+    await rejected(
+      "https://www.facebook.com/share/p/1Fu5ScGFUZ/",
+      "https://www.facebook.com:8443/reel/1016339268064528",
+    ),
+  ).toBe(1);
+});
+
+test("an unparseable location fails the expansion", async () => {
+  expect(await rejected("https://www.facebook.com/share/p/1Fu5ScGFUZ/", "https://[")).toBe(1);
+});
+
+test("an unrelated host is not expanded", async () => {
+  const { fetcher, calls } = recording();
+  const href = "https://www.youtube.com/watch?v=abc";
+  const result = await expandShareLink(new URL(href), fetcher);
+  expect(result?.href).toBe(href);
+  expect(calls).toHaveLength(0);
+});
+
+test("a facebook share link that redirects to www is followed to the post", async () => {
+  const { fetcher, calls } = recording([
+    redirect("https://www.facebook.com/share/p/1Fu5ScGFUZ/", 301),
+    redirect(FB_POST_LOC),
+  ]);
+  const result = await expandShareLink(new URL("https://facebook.com/share/p/1Fu5ScGFUZ/"), fetcher);
+  expect(result?.href).toBe(FB_POST_LOC);
+  expect(calls.map((call) => call.input)).toEqual([
+    "https://facebook.com/share/p/1Fu5ScGFUZ/",
+    "https://www.facebook.com/share/p/1Fu5ScGFUZ/",
+  ]);
+});
+
+test("an instagram share link that redirects to www is followed to the post", async () => {
+  const { fetcher, calls } = recording([
+    redirect("https://www.instagram.com/share/p/BBFVaX2n1Y/", 301),
+    redirect(IG_POST_LOC),
+  ]);
+  const result = await expandShareLink(new URL("https://instagram.com/share/p/BBFVaX2n1Y/"), fetcher);
+  expect(result?.href).toBe(IG_POST_LOC);
+  expect(calls).toHaveLength(2);
+});
+
+test("a relative location is resolved against the hop that returned it", async () => {
+  const { fetcher } = recording([
+    redirect("https://www.facebook.com/share/v/1HSGH1rf7o/", 301),
+    redirect("/reel/1016339268064528"),
+  ]);
+  const result = await expandShareLink(new URL("https://facebook.com/share/v/1HSGH1rf7o/"), fetcher);
+  expect(result?.href).toBe("https://www.facebook.com/reel/1016339268064528");
+});
+
+test("three hops can land on a mobile facebook post", async () => {
+  const { fetcher, calls } = recording([
+    redirect("https://www.facebook.com/share/p/1Fu5ScGFUZ/", 301),
+    redirect("https://m.facebook.com/share/p/1Fu5ScGFUZ/"),
+    redirect(M_LOC),
+  ]);
+  const result = await expandShareLink(new URL("https://facebook.com/share/p/1Fu5ScGFUZ/"), fetcher);
+  expect(result?.href).toBe(M_LOC);
+  expect(calls).toHaveLength(3);
+});
+
+test("one expansion shares a single five-second deadline", async () => {
+  const sentinel = new AbortController().signal;
+  const spy = spyOn(AbortSignal, "timeout").mockReturnValue(sentinel);
+  try {
+    const { fetcher, calls } = recording([
+      redirect("https://www.facebook.com/share/p/1Fu5ScGFUZ/", 301),
+      redirect(FB_POST_LOC),
+    ]);
+    await expandShareLink(new URL("https://facebook.com/share/p/1Fu5ScGFUZ/"), fetcher);
+    expect(spy.mock.calls).toEqual([[5000]]);
+    expect(calls[0]?.init.signal).toBe(sentinel);
+    expect(calls[1]?.init.signal).toBe(sentinel);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+test("a share link that never leaves /share/ stops after three requests", async () => {
+  const share = "https://www.facebook.com/share/p/1Fu5ScGFUZ/";
+  const { fetcher, calls } = recording([redirect(share)]);
+  expect(await expandShareLink(new URL(share), fetcher)).toBeNull();
+  expect(calls).toHaveLength(3);
+});

@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: "zh-TW"
+tone_instructions: "Concise and direct. Report real problems only; no praise."
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  in_progress_fortune: false
+  auto_review:
+    enabled: true
+    drafts: false
+
+  path_filters:
+    - "!bun.lock"
+    - "!test/fixtures/**"
+
+  path_instructions:
+    - path: "README*.md"
+      instructions: >-
+        Fix-service domains must not be written out.
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    # Guideline files apply only to their own directory unless mapped with applyTo.
+    filePatterns:
+      - files: "docs/spec/*.md"
+        applyTo: "src/**/*.ts"
+      - files: "docs/spec/free-plan-bindings-only.md"
+        applyTo: "cloudflare.config.ts"

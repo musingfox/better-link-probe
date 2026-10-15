@@ -1,0 +1,4 @@
+.obsidian.yaml
+node_modules/
+.wrangler/
+.cloudflare/

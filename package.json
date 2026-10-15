@@ -1,0 +1,24 @@
+{
+  "name": "better-link-probe",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cf dev",
+    "deploy": "cf deploy",
+    "typecheck": "cf workers types && tsc -p tsconfig.json && tsc -p tsconfig.test.json",
+    "check": "bun run typecheck && bun test",
+    "smoke": "bash scripts/smoke.sh"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.2",
+    "cf": "^1.0.0-beta.6",
+    "typescript": "~5.9.3",
+    "wrangler": "4.141.0"
+  },
+  "cloudflare": {
+    "label": "better-link",
+    "products": [
+      "Workers"
+    ]
+  }
+}
